@@ -1,0 +1,16 @@
+# core
+pandas
+numpy
+
+# interactive app + live feeds
+flask
+paho-mqtt
+websocket-client
+requests
+
+# unsupervised models
+scikit-learn
+
+# optional: real cable routes + bathymetry depth-gate
+geopandas
+rasterio

@@ -1,0 +1,33 @@
+# Raw AIS data — never commit (day-files are multi-GB). Keep only the tiny self-test sample.
+data/*
+!data/sample_ais.csv
+
+# Trained models & derived geographic layers (regenerate locally)
+*.joblib
+cable_*.geojson
+bathy_*.tif
+gfw_events.*
+
+# Generated outputs
+demo_map*.html
+alerts*.csv
+onepager.html
+*.pdf
+
+# Secrets — the GFW token is read from the GFW_TOKEN env var, never a file. Belt and braces:
+.env
+*.token
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

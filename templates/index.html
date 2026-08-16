@@ -1,0 +1,147 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Seabed Sentinel</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<style>
+ html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif}
+ #map{position:absolute;inset:0}
+ #bar{position:absolute;top:0;left:0;right:0;z-index:1000;background:#0f172a;color:#e2e8f0;
+   display:flex;gap:9px;align-items:center;padding:8px 12px;font-size:13px;flex-wrap:wrap}
+ #bar b{font-size:14px;margin-right:4px} button{background:#334155;color:#e2e8f0;border:0;
+   border-radius:6px;padding:6px 10px;cursor:pointer;font-size:13px} button:hover{background:#475569}
+ button.on{background:#2a9d8f} input,select{background:#1e293b;color:#e2e8f0;border:1px solid #334155;
+   border-radius:6px;padding:5px 8px;font-size:12px} .stat{color:#94a3b8;margin-left:auto;font-size:12px}
+ .err{color:#fca5a5}
+ #panel{position:absolute;top:52px;right:12px;z-index:1000;width:300px;max-height:86%;overflow:auto;
+   background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px 14px;box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:13px}
+ .al{background:#1e293b;border-radius:7px;padding:7px 9px;margin:6px 0;cursor:pointer;line-height:1.35}
+ .al:hover{background:#334155} .sc{float:right;color:#94a3b8;font-size:11px}
+ h3{margin:2px 0 8px;font-size:14px} .k{color:#94a3b8} .row{margin:3px 0}
+ .chip{display:inline-block;background:#7f1d1d;color:#fecaca;border-radius:5px;padding:1px 6px;font-size:11px} a{color:#7dd3fc}
+</style></head><body>
+<div id="bar">
+ <b>Seabed Sentinel</b>
+ <select id="corridor" onchange="switchCorridor()" title="corridor / area"></select>
+ <button id="mHist" class="on" onclick="setMode('historic')">Historic</button>
+ <button id="mLive" onclick="setMode('live')">Live</button>
+ <span id="histCtl"><input id="file" size="30" placeholder="DMA file path (blank = real_bbox / sample)">
+   <button onclick="runHistoric()">Run</button></span>
+ <span id="liveCtl" style="display:none">
+   <select id="src"><option value="digitraffic">Digitraffic (Baltic, no key)</option>
+     <option value="aisstream">aisstream (global, key)</option></select>
+   <input id="key" size="16" placeholder="aisstream key (opt)">
+   <button id="liveBtn" onclick="toggleLive()">Start</button></span>
+ <span class="stat" id="stat">loading…</span>
+</div>
+<div id="map"></div>
+<div id="panel"><h3 id="ptitle">Alerts</h3><div id="alerts"></div><div id="detail"></div></div>
+<script>
+const STYLE={"ANCHOR-DRAG SUSPECT":["#d1495b",5],"DARK / AIS GAP":["#e8833a",5],
+ "leisure/fishing":["#3b82c4",2],"fishing-like":["#3b82c4",2],"transit":["#9aa5b1",2],
+ "stopped":["#b0b7c0",3],"other":["#8a94a3",2]};
+let map,layer,player,cableLayer,boxLayer,cfg,mode="historic",live=false,timer=null,byMmsi={};
+const nm=(s,mmsi)=>(!s||s=="nan"||s=="None")?("MMSI "+mmsi):s;
+
+function initConfig(){
+ return fetch("/api/config").then(r=>r.json()).then(c=>{
+  cfg=c;
+  const sel=document.getElementById("corridor");
+  sel.innerHTML=c.presets.map(p=>`<option value="${p}"${p==c.corridor?" selected":""}>${p}</option>`).join("");
+  if(!map){map=L.map("map").setView(c.center,10);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      {subdomains:"abcd",maxZoom:19,attribution:"© OpenStreetMap © CARTO"}).addTo(map);
+    layer=L.layerGroup().addTo(map); player=L.layerGroup().addTo(map);}
+  else{map.setView(c.center,10);}
+  if(cableLayer)map.removeLayer(cableLayer);
+  if(boxLayer)map.removeLayer(boxLayer);
+  cableLayer=L.polyline(c.cable.map(p=>[p[0],p[1]]),{color:"#2a9d8f",weight:3,dashArray:"6 5"}).addTo(map);
+  const b=c.bbox; boxLayer=L.rectangle([[b[0],b[2]],[b[1],b[3]]],{color:"#2a9d8f",weight:1,fill:false,dashArray:"3 6"}).addTo(map);
+ });
+}
+initConfig().then(()=>runHistoric());
+
+function switchCorridor(){
+ const name=document.getElementById("corridor").value;
+ fetch("/api/corridor",{method:"POST",headers:{"Content-Type":"application/json"},
+   body:JSON.stringify({name})}).then(()=>{ if(live)toggleLive(); layer.clearLayers();
+   initConfig().then(()=>{ if(mode=="historic")runHistoric(); else setStat("corridor: "+name+" — press Start"); }); });
+}
+function setMode(m){mode=m;
+ document.getElementById("mHist").className=m=="historic"?"on":"";
+ document.getElementById("mLive").className=m=="live"?"on":"";
+ document.getElementById("histCtl").style.display=m=="historic"?"":"none";
+ document.getElementById("liveCtl").style.display=m=="live"?"":"none";
+ if(m=="historic"&&live)toggleLive();
+}
+function alertItem(p){return `<div class="al" onclick="loadVessel(${p.mmsi})"><b style="color:${(STYLE[p.label]||STYLE.other)[0]}">${p.label}</b> <span class="sc">score ${p.score}</span><br>${nm(p.name,p.mmsi)} <span class="k">${p.ship_type}</span></div>`;}
+function watchItem(p){return `<div class="al" onclick="loadVessel(${p.mmsi})" style="border-left:3px solid #eab308"><b style="color:#eab308">WATCH</b> <span class="sc">route ${p.route_anomaly}</span><br>${nm(p.name,p.mmsi)} <span class="k">${p.ship_type}</span></div>`;}
+function render(gj,head){
+ layer.clearLayers(); byMmsi={}; const alerts=[],watch=[];
+ gj.features.forEach(f=>{const p=f.properties; let col,wt;
+  if(p.watch&&!p.alert){col="#eab308";wt=4;} else {const s=STYLE[p.label]||STYLE.other;col=s[0];wt=p.alert?s[1]+1:s[1];}
+  const pl=L.polyline(f.geometry.coordinates.map(c=>[c[1],c[0]]),
+    {color:col,weight:wt,opacity:(p.alert||p.watch)?.95:.5});
+  pl.on("click",()=>loadVessel(p.mmsi,p)); pl.addTo(layer); byMmsi[p.mmsi]=pl;
+  if(p.alert)alerts.push(p); else if(p.watch)watch.push(p);});
+ alerts.sort((a,b)=>b.score-a.score); watch.sort((a,b)=>(b.route_anomaly||0)-(a.route_anomaly||0));
+ document.getElementById("ptitle").textContent=head;
+ let html=alerts.length?alerts.map(alertItem).join(""):'<div class="al">no alerts — corridor clear</div>';
+ if(watch.length)html+=`<div class="k" style="margin:9px 0 2px">Watch — ML route anomaly</div>`+watch.map(watchItem).join("");
+ document.getElementById("alerts").innerHTML=html;
+}
+function runHistoric(){
+ if(player)player.clearLayers();
+ const f=document.getElementById("file").value.trim(); setStat("processing…");
+ fetch("/api/historic?file="+encodeURIComponent(f)).then(r=>r.json()).then(d=>{
+   render(d.geojson,"Alerts — historic");
+   setStat(`historic · ${d.vessels} vessels · ${d.alerts} alerts`);
+ }).catch(e=>setStat("error: "+e));
+}
+function toggleLive(){
+ const btn=document.getElementById("liveBtn");
+ if(!live){
+   const src=document.getElementById("src").value,key=document.getElementById("key").value;
+   fetch("/api/live/start",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({source:src,key:key})}).then(r=>r.json()).then(d=>{
+     if(!d.ok){setStat("live error: "+d.error);return;}
+     live=true;btn.textContent="Stop";btn.className="on";timer=setInterval(pollLive,4000);pollLive();
+   });
+ } else {
+   fetch("/api/live/stop",{method:"POST"}); live=false;btn.textContent="Start";btn.className="";
+   if(timer)clearInterval(timer); if(player)player.clearLayers();
+ }
+}
+function renderPoints(gj){
+ player.clearLayers();
+ (gj&&gj.features||[]).forEach(f=>{const p=f.properties;const c=(STYLE[p.label]||["#64748b",3])[0];
+   const mk=L.circleMarker([f.geometry.coordinates[1],f.geometry.coordinates[0]],
+     {radius:p.alert?7:4,color:c,weight:1,fillColor:c,fillOpacity:.85});
+   mk.on("click",()=>loadVessel(p.mmsi,p)); mk.addTo(player);});
+}
+function pollLive(){
+ fetch("/api/live").then(r=>r.json()).then(d=>{
+   render(d.geojson,"Alerts — live"); renderPoints(d.points);
+   const conn=d.connected?"conn ✓":"conn …";
+   let s=`live (${d.source}) · ${conn} · rx ${d.rx} · loc ${d.parsed} · meta ${d.meta} · in-box ${d.in_bbox} · tracking ${d.tracked} · ${d.alerts} alerts`;
+   const el=document.getElementById("stat"); el.className="stat"; el.textContent=s;
+   if(d.last_error){el.innerHTML=s+` <span class="err">· err: ${d.last_error}</span>`;}
+ });
+}
+function loadVessel(mmsi,props){
+ if(byMmsi[mmsi]){map.fitBounds(byMmsi[mmsi].getBounds().pad(1.5));}
+ fetch("/api/vessel/"+mmsi).then(r=>r.json()).then(v=>{
+   const links=Object.entries(v.links||{}).map(([k,u])=>`<a href="${u}" target="_blank">${k}</a>`).join(" · ");
+   const flag=(v.flag_state||"—")+(v.flag_of_convenience_hint?' <span class="chip">flag of convenience</span>':'');
+   document.getElementById("detail").innerHTML=
+    `<h3 style="margin-top:14px">${nm(v.name,mmsi)}</h3>
+     <div class="row"><span class="k">MMSI</span> ${v.mmsi} &nbsp; <span class="k">IMO</span> ${v.imo||"—"}</div>
+     <div class="row"><span class="k">Flag</span> ${flag}</div>
+     <div class="row"><span class="k">Type</span> ${v.ship_type||"—"}</div>
+     <div class="row"><span class="k">Dims</span> ${v.length_m||"?"}×${v.width_m||"?"} m &nbsp; <span class="k">Draught</span> ${v.draught_m||"?"} m</div>
+     <div class="row"><span class="k">Dest</span> ${v.destination||"—"} &nbsp; <span class="k">Nav</span> ${v.nav_status||"—"}</div>
+     ${v.gfw_flag?`<div class="row"><span class="k">GFW flag</span> ${v.gfw_flag}</div>`:""}
+     <div class="row" style="margin-top:6px">${links}</div>`;
+ });
+}
+function setStat(s){const el=document.getElementById("stat");el.className="stat";el.textContent=s;}
+</script></body></html>
