@@ -123,5 +123,3 @@ themselves invisible).
 routes & bathymetry, the large-scale movement-model training run, and the path to operational.
 
 ---
-
-*Author: Hannes Zimmermann & Claude*
