@@ -119,6 +119,9 @@ design-partner's operational feed, a multi-day false-positive baseline, and **Ph
 Sentinel-1 SAR dark-vessel detections with the AIS go-dark events (catching vessels that turn
 themselves invisible).
 
+**See [ROADMAP.md](ROADMAP.md)** for the full outlook and next steps — SAR cross-check, real cable
+routes & bathymetry, the large-scale movement-model training run, and the path to operational.
+
 ---
 
 *Author: Hannes Zimmermann — automotive innovation engineer & PM (sensor fusion, fault-tolerant
