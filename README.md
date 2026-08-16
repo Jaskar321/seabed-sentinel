@@ -121,6 +121,4 @@ themselves invisible).
 
 ---
 
-*Author: Hannes Zimmermann — automotive innovation engineer & PM (sensor fusion, fault-tolerant
-control, perception). The detection approach is ADAS threat-fusion, ported from "protect the
-vehicle" to "protect the cable".*
+*Author: Hannes Zimmermann & Claude*
